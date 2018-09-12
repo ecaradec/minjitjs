@@ -5,71 +5,101 @@ var JNZ = 0x03;
 var LD  = 0x04;
 var CMP = 0x05;
 
-var memory = [ADD, 1, CMP, 16, JNZ, 0, LD, 0, JMP, 0];
-
-function log(opcode) {
-    console.log(registers.IP+" "+opcode+"   \t: A="+registers.A+" Z="+(registers.Z?1:0));
-}
-
-var jitIP = 0;
-var registers = {IP : 0, A:0, log: log};
-var funcs = [];
 var debug = true;
 
-function compile(jitIP) {    
-    var fName = "f_"+jitIP;
+function JITCompiler(memory) {
+    this.memory = memory;
+}
+JITCompiler.prototype.compile=function(ip) {
+    this.jitIP = ip;
+    var fName = "f_"+this.jitIP;
     console.log("Building "+fName+"...");
     
     var body = "";
     var j = 0;
     do {
-        var opcode = memory[jitIP];
-        jitIP+=1;
-
-        if(opcode == NOP) {
-            if(debug) body += "m.log('NOP')\n";
-            body += "m.IP+=1;\n"; // it's sort of useless to update IP
-        }
-        if(opcode == ADD) {
-            if(debug) body += "m.log('ADD "+memory[jitIP]+"')\n";
-            body += "m.IP+=2;\n"
-            body += "m.A+="+memory[jitIP]+";\n";
-            jitIP++;
-        }
-        if(opcode == CMP) {
-            if(debug) body += "m.log('CMP "+memory[jitIP]+"')\n"; 
-            body += "m.IP+=2;\n"
-            body += "m.Z=(m.A=="+memory[jitIP]+");\n";
-            jitIP++;
-        }
-        if(opcode == LD) {
-            if(debug) body += "m.log('LD "+memory[jitIP]+"')\n";             
-            body += "m.IP+=2;\n"
-            body += "m.A="+memory[jitIP]+";\n";
-            jitIP++;
-        }        
-        if(opcode == JMP) {
-            if(debug) body += "m.log('JMP "+memory[jitIP]+"')\n";             
-            body += "m.IP="+memory[jitIP]+";\n"
+        var opcode = this.fetch();
+        body += this.ops[opcode](this);
+        if(opcode == JMP || opcode == JNZ)
             break;
-        }
-        if(opcode == JNZ) {
-            if(debug) body += "m.log('JNZ "+memory[jitIP]+"')\n";            
-            body += "if(!m.Z)\n";
-            body += "    m.IP="+memory[jitIP]+";\n"
-            body += "else";
-            body += "    m.IP+=2;";
-            break;
-        }        
     } while(true);
 
     console.log(body);
-    var f = funcs[fName] = new Function('m', body);
+    var f =  new Function('m', body);
     return f;
 }
-
-for(var it=0;it<50;it++) {
-    var f = funcs['f_'+registers.IP]!=undefined ? funcs['f_'+registers.IP] : compile(registers.IP);
-    f(registers);
+JITCompiler.prototype.fetch=function() {
+    var b = this.memory[this.jitIP];
+    this.jitIP++;
+    return b;
 }
+var ops = JITCompiler.prototype.ops = [];
+ops[NOP] = function(c) {
+    return `
+    ${debug?'m.log("NOP");':''}
+    m.registers.IP+1;
+`;
+}
+ops[ADD] = function(c) {
+    var operand = c.fetch();
+    return `
+    ${debug?'m.log("ADD '+operand+'");':''}
+    m.registers.A += ${operand};
+    m.registers.IP+=2;
+    `;
+}
+ops[CMP] = function(c) {
+    var operand = c.fetch();
+    return `
+    ${debug?'m.log("CMP '+operand+'");':''}
+    m.registers.IP+=2;
+    m.registers.Z=(m.registers.A==${operand});
+    `;
+}
+ops[LD] = function(c) {
+    var operand = c.fetch();
+    return `
+    ${debug?'m.log("LD '+operand+'");':''}    
+    m.registers.IP+=2;
+    m.registers.A=${operand};
+    `;
+}
+ops[JMP] = function(c) {
+    var operand = c.fetch();
+    return `
+    ${debug?'m.log("JMP '+operand+'");':''}    
+    m.registers.IP=${operand};
+    `;
+}
+ops[JNZ] = function(c) {
+    var operand = c.fetch();
+    return `
+    ${debug?'m.log("JNZ '+operand+'");':''}    
+    if(!m.registers.Z)
+        m.registers.IP=${operand};
+    else
+        m.registers.IP+=2;
+    `;
+}
+
+function VM() {
+    this.funcs = {};
+    this.memory = [ADD, 1, CMP, 16, JNZ, 0, LD, 0, JMP, 0];
+    this.compiler = new JITCompiler(this.memory);
+}
+VM.prototype.reset=function() {
+    this.registers = { IP:0, A: 0, Z: 0};
+    
+    //for(;;) {
+    for(var it=0;it<50;it++) {
+        var f =  this.funcs['f_'+this.registers.IP]!=undefined ? this.funcs['f_'+this.registers.IP] : (this.funcs['f_'+this.registers.IP] = this.compiler.compile(this.registers.IP) );
+        f(this);
+    }
+}
+VM.prototype.log = function(opcode) {
+    console.log(this.registers.IP+" "+opcode+"   \t: A="+this.registers.A+" Z="+(this.registers.Z?1:0));
+}
+
+var vm = new VM;
+vm.reset();
 
